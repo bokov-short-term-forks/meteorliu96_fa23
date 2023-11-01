@@ -54,3 +54,4 @@ local.config.R
 data/
 *.apps.googleusercontent.com.json
 *.png
+.DS_Store
