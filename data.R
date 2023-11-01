@@ -23,8 +23,9 @@
 # This part does not show up in your rendered report, only in the script,
 # because we are using regular comments instead of #' comments
 debug <- 0;
-upload_to_google = 1
+upload_to_google = 0
 knitr::opts_chunk$set(echo=debug>-1, warning=debug>0, message=debug>0);
+refresh = 0
 
 library(ggplot2); # visualisation
 library(GGally);
@@ -37,12 +38,14 @@ library(fs);    # file system operations
 
 options(max.print=42);
 options(datatable.na.strings=c('NA','NULL',''));
+options(datatable.integer64="numeric")
 panderOptions('table.split.table',Inf); panderOptions('table.split.cells',Inf);
+
 
 starting_names = ls()
 
 # download data
-if(!file.exists('data.R.rdata')){
+if(!file.exists('data.R.rdata')|refresh){
   #' # Import the data
   Input_Data <- 'https://physionet.org/static/published-projects/mimic-iv-demo/mimic-iv-clinical-database-demo-1.0.zip';
   dir.create('data',showWarnings = FALSE);
@@ -50,7 +53,11 @@ if(!file.exists('data.R.rdata')){
   download.file(Input_Data,destfile = Zipped_Data);
   Unzipped_Data <- unzip(Zipped_Data,exdir = 'data') %>% grep('gz$',.,val=T);
   Table_Names <- path_ext_remove(Unzipped_Data) %>% fs::path_ext_remove() %>% basename;
-  for(ii in seq_along(Unzipped_Data)) assign(Table_Names[ii],import(Unzipped_Data[ii],format='csv',fread = FALSE));
+  for(ii in seq_along(Unzipped_Data)) {
+    assign(Table_Names[ii]
+           ,import(Unzipped_Data[ii],format='csv')  %>% mutate(across(where(~is(.x,"IDate")), as.Date))
+
+           )};
   #mapply(function(aa,bb) assign(aa,import(bb,format='csv'),inherits = T),Table_Names,Unzipped_Data)
   save(list=c(Table_Names,'Table_Names'),file='data.R.rdata');
   print('Downloaded')
@@ -194,7 +201,7 @@ bqr_auth(email = "meteor123sanctity@gmail.com")
 
 bqr_upload_data("potent-bulwark-401719", 'ICU_Admissions_Data', Table_Names[2], get(Table_Names[2]))
 
-for (i in 26:length(Table_Names)) {
+for (i in 28:length(Table_Names)) {
   bqr_upload_data("potent-bulwark-401719", 'ICU_Admissions_Data', Table_Names[i], get(Table_Names[i]))
 
 }
