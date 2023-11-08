@@ -93,5 +93,48 @@ SET @@dataset_id = 'ICU_Admissions_Data';
     FROM q0
     ORDER BY hadm_id, date
   );
+
+  DROP TABLE IF EXISTS ICU_scaffold;
+  CREATE TABLE ICU_scaffold as(
+    WITH RECURSIVE q0 as(
+        SELECT hadm_id,subject_id,stay_id,  ceiling(los) as ICU_revised_los,
+          Date(intime) as ICU_date, Date(outtime) as outtime,los as ICU_los, intime
+        FROM icustays
+        UNION ALL
+        SELECT hadm_id,subject_id,stay_id, ICU_revised_los,
+          date_add(ICU_date, INTERVAL 1 day) as ICU_date, outtime, ICU_los, intime
+        FROM q0
+        WHERE ICU_date < outtime
+      )
+      SELECT hadm_id,subject_id, stay_id, ICU_date, ICU_los, ICU_revised_los, intime
+      FROM q0
+      ORDER BY hadm_id, ICU_date
+  );
+/*
+ICU_scaffold = icustays %>% transmute( hadm_id, subject_id , stay_id , ICU_los = los,
+                                       ICU_los_revised = ceiling(as.numeric(outtime - intime) / 1440),
+                                         ICU_date = purrr::map2(intime,outtime, function(xx,yy) seq(trunc(xx,units = 'days'),yy, by = 'day'))
+) %>% tidyr::unnest(ICU_date) %>%
+  group_by(hadm_id, subject_id , ICU_date) %>% summarise(stay_id = list(stay_id),
+                                                         ICU_los = list(ICU_los))
+
+*/
   SET @@dataset_id = 'ICU_Admissions_Data';
+  DROP TABLE IF EXISTS main_data;
+  CREATE TABLE main_data as(
+    with q0 as(
+
+      SELECT adm_scaffold.*, stay_ID, ICU_revised_los,
+        ROW_NUMBER() OVER (PARTITION BY ICU_scaffold.hadm_id, date order by intime) as rm
+      FROM adm_scaffold
+      LEFT JOIN ICU_scaffold on adm_scaffold.hadm_id = ICU_scaffold.hadm_id and adm_scaffold.date = ICU_scaffold.ICU_date
+    )
+    SELECT hadm_id, subject_id, date, los, stay_ID, ICU_revised_los
+    FROM q0 WHERE rm = 1
+    ORDER BY hadm_id, date
+  )
+
+
+
+
 --END
