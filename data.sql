@@ -54,9 +54,9 @@ SET @@dataset_id = 'ICU_Admissions_Data';
 
   DROP TABLE IF EXISTS named_labevents;
   CREATE TABLE named_labevents as
-  SELECT d_items.*,labevent_id,subject_id,hadm_id,specimen_id,charttime,storetime,value,valuenum,valueuom,ref_range_lower,ref_range_upper,flag,priority,comments
+  SELECT d_labitems.*,labevent_id,subject_id,hadm_id,specimen_id,charttime,storetime,value,valuenum,valueuom,ref_range_lower,ref_range_upper,flag,priority,comments
   FROM labevents
-  LEFT JOIN d_items on labevents.itemid = d_items.itemid;
+  LEFT JOIN d_labitems on labevents.itemid = d_labitems.itemid;
 
   DROP TABLE IF EXISTS named_chartevents;
   CREATE TABLE named_chartevents as
@@ -97,7 +97,7 @@ SET @@dataset_id = 'ICU_Admissions_Data';
   DROP TABLE IF EXISTS ICU_scaffold;
   CREATE TABLE ICU_scaffold as(
     WITH RECURSIVE q0 as(
-        SELECT hadm_id,subject_id,stay_id,  ceiling(los) as ICU_revised_los,
+        SELECT hadm_id,subject_id, stay_id,  ceiling(los) as ICU_revised_los,
           Date(intime) as ICU_date, Date(outtime) as outtime,los as ICU_los, intime
         FROM icustays
         UNION ALL
@@ -105,10 +105,15 @@ SET @@dataset_id = 'ICU_Admissions_Data';
           date_add(ICU_date, INTERVAL 1 day) as ICU_date, outtime, ICU_los, intime
         FROM q0
         WHERE ICU_date < outtime
-      )
-      SELECT hadm_id,subject_id, stay_id, ICU_date, ICU_los, ICU_revised_los, intime
+      ),
+      q1 as (SELECT hadm_id,subject_id, stay_id, ICU_date, ICU_los, ICU_revised_los, intime, --new added
+        ROW_NUMBER() OVER (PARTITION BY hadm_id, ICU_date order by intime) as rn
       FROM q0
       ORDER BY hadm_id, ICU_date
+      )
+      SELECT *
+      FROM q1
+      WHERE rn = 1
   );
 /*
 ICU_scaffold = icustays %>% transmute( hadm_id, subject_id , stay_id , ICU_los = los,
@@ -123,16 +128,42 @@ ICU_scaffold = icustays %>% transmute( hadm_id, subject_id , stay_id , ICU_los =
   DROP TABLE IF EXISTS main_data;
   CREATE TABLE main_data as(
     with q0 as(
-
-      SELECT adm_scaffold.*, stay_ID, ICU_revised_los,
-        ROW_NUMBER() OVER (PARTITION BY ICU_scaffold.hadm_id, date order by intime) as rm
+      SELECT adm_scaffold.*, stay_ID, ICU_revised_los
       FROM adm_scaffold
       LEFT JOIN ICU_scaffold on adm_scaffold.hadm_id = ICU_scaffold.hadm_id and adm_scaffold.date = ICU_scaffold.ICU_date
+    ),
+    q1 as(
+    SELECT subject_id, Date(charttime) as charttime, min(valuenum) AS pH, max(IF(flag = 'abnormal',1,0)) AS pH_flag
+    FROM named_labevents
+    WHERE itemid = 50820
+    GROUP BY subject_id, Date(charttime)
     )
-    SELECT hadm_id, subject_id, date, los, stay_ID, ICU_revised_los
-    FROM q0 WHERE rm = 1
-    ORDER BY hadm_id, date
-  )
+    SELECT q0.*, --IF(named_icd.hadm_id IS null, 0, 1) AS Hypoglycemia,
+      IF(temp1.long_title IS null, 0, 1) AS Hypertension,
+      pH, pH_flag
+    FROM q0
+    LEFT JOIN named_icd on q0.hadm_id = named_icd.hadm_id
+      and icd_code IN ('E11649','E162', 'E161', 'E160', 'E13141', 'E15')
+    LEFT JOIN named_icd as temp1 on q0.hadm_id = temp1.hadm_id
+      and temp1.long_title LIKE "%Hyperten%"
+    LEFT JOIN q1 on q0.subject_id = q1.subject_id and q0.date = q1.charttime
+    ORDER BY q0.hadm_id, date
+  );
+
+
+/*
+pH_table = named_labevents %>% mutate( charttime = as.Date(charttime)) %>%
+  filter(itemid == 50820) %>%
+  group_by(subject_id, charttime) %>% summarise(pH = min(valuenum),
+                                                # flag = !any(between(valuenum, ref_range_lower, ref_range_upper)),
+                                                pH_flag = any(flag=='abnormal')
+                                                ) %>%  arrange(desc(pH))
+*/
+  SET @@dataset_id = 'ICU_Admissions_Data';
+
+  --ORDER BY pH
+
+
 
 
 
